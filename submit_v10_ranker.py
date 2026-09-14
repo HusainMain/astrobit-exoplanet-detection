@@ -1,13 +1,10 @@
 """
 Submission v10-ranker: Augmented LGBMRanker for period selection.
 
-Architecture:
-  BLS top-20 candidates -> candidate features -> augmented LGBMRanker score
-  -> select best-ranked candidate per star
-  -> detection confidence from v7 detector (star-level)
-  -> period/depth/duration from ranker-selected candidate
+Auto-detects dev vs private data based on which files exist.
+Generates proper STAR_XXXX IDs for private data, KIC_XXXXXXXX for dev.
 """
-import sys, warnings, pickle
+import sys, warnings, pickle, argparse
 warnings.filterwarnings("ignore")
 sys.path.insert(0, r'C:\Users\husai\OneDrive\Pictures\Documents\AstroBit')
 
@@ -36,18 +33,38 @@ def load_ranker():
     return artifact["model"], artifact["feature_columns"]
 
 
+def detect_split():
+    """Auto-detect whether we're running on dev or private data."""
+    private_cands = OUTPUTS_DIR / "private_candidates_v4.csv"
+    dev_cands = OUTPUTS_DIR / "dev_candidates_v4.csv"
+
+    if private_cands.exists():
+        return "private"
+    elif dev_cands.exists():
+        return "dev"
+    else:
+        raise FileNotFoundError(
+            "No candidates file found. Run build_candidates.py first for dev or private data."
+        )
+
+
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--split", choices=["dev", "private"], default=None,
+                        help="Force dev or private (auto-detect if omitted)")
+    args = parser.parse_args()
+
+    split = args.split or detect_split()
     print("=" * 70)
-    print("SUBMISSION v10-ranker: Augmented LGBMRanker period selection")
+    print(f"SUBMISSION v10-ranker: {split.upper()} data")
     print("=" * 70)
 
     # ── Load data ──────────────────────────────────────────────────────
-    candidates = pd.read_csv(OUTPUTS_DIR / "dev_candidates_v4.csv")
-    det = pd.read_csv(OUTPUTS_DIR / "dev_detected_v7.csv")
-    orig_rerank = pd.read_csv(OUTPUTS_DIR / "dev_reranked_v4.csv")
+    candidates = pd.read_csv(OUTPUTS_DIR / f"{split}_candidates_v4.csv")
+    det = pd.read_csv(OUTPUTS_DIR / f"{split}_detected_v7.csv")
 
-    labels = load_labels("dev")
-    truth = load_truth("dev")
+    labels = load_labels(split)
+    truth = load_truth(split)
     target_info = make_target(labels, truth)
     has_planet_map = target_info["target"]
 
@@ -76,62 +93,65 @@ def main():
     )
     best_per_star["det_proba"] = best_per_star["det_proba"].fillna(0)
 
-    # ── Period recovery evaluation ─────────────────────────────────────
-    print(f"\n{'='*70}")
-    print("DEV PERIOD RECOVERY")
-    print("=" * 70)
+    # ── Period recovery evaluation (dev only) ──────────────────────────
+    if split == "dev":
+        print(f"\n{'='*70}")
+        print("DEV PERIOD RECOVERY")
+        print("=" * 70)
 
-    for method_name, score_df, proba_col in [
-        ("Rank-0 (highest SDE)", candidates, "bls_sde"),
-        ("Original reranker", orig_rerank, "proba_ensemble"),
-        ("Augmented ranker", candidates, "ranker_score"),
-    ]:
-        correct = 0
-        n = 0
-        for kepid_val, grp in score_df.groupby("kepid"):
-            kepid = int(kepid_val)
-            true_p = truth_dict.get(kepid, {}).get("period_days", None)
-            if true_p is None or true_p <= 0:
-                continue
-            n += 1
-            p = grp.sort_values(proba_col, ascending=False).iloc[0]["bls_period"]
-            if is_alias(p, true_p):
-                correct += 1
-        print(f"  {method_name:30s}: {correct}/{n} = {correct/n:.3f}")
+        orig_rerank = pd.read_csv(OUTPUTS_DIR / "dev_reranked_v4.csv")
 
-    # ── Per-bin breakdown ──────────────────────────────────────────────
-    print(f"\n  Per-bin (augmented ranker):")
-    for bin_name in ["earth_analog", "shallow", "mid", "deep"]:
-        correct = 0
-        n = 0
-        for kepid_val, grp in candidates.groupby("kepid"):
-            kepid = int(kepid_val)
-            true_info = truth_dict.get(kepid, {})
-            true_p = true_info.get("period_days", None)
-            true_bin = true_info.get("bin", None)
-            if true_p is None or true_p <= 0 or true_bin != bin_name:
-                continue
-            n += 1
-            p = grp.sort_values("ranker_score", ascending=False).iloc[0]["bls_period"]
-            if is_alias(p, true_p):
-                correct += 1
-        if n > 0:
-            print(f"    {bin_name:>14s}: {correct}/{n}")
+        for method_name, score_df, proba_col in [
+            ("Rank-0 (highest SDE)", candidates, "bls_sde"),
+            ("Original reranker", orig_rerank, "proba_ensemble"),
+            ("Augmented ranker", candidates, "ranker_score"),
+        ]:
+            correct = 0
+            n = 0
+            for kepid_val, grp in score_df.groupby("kepid"):
+                kepid = int(kepid_val)
+                true_p = truth_dict.get(kepid, {}).get("period_days", None)
+                if true_p is None or true_p <= 0:
+                    continue
+                n += 1
+                p = grp.sort_values(proba_col, ascending=False).iloc[0]["bls_period"]
+                if is_alias(p, true_p):
+                    correct += 1
+            print(f"  {method_name:30s}: {correct}/{n} = {correct/n:.3f}")
 
-    # ── Detection evaluation ───────────────────────────────────────────
-    print(f"\n{'='*70}")
-    print("DETECTION METRICS")
-    print("=" * 70)
+        # ── Per-bin breakdown ──────────────────────────────────────────
+        print(f"\n  Per-bin (augmented ranker):")
+        for bin_name in ["earth_analog", "shallow", "mid", "deep"]:
+            correct = 0
+            n = 0
+            for kepid_val, grp in candidates.groupby("kepid"):
+                kepid = int(kepid_val)
+                true_info = truth_dict.get(kepid, {})
+                true_p = true_info.get("period_days", None)
+                true_bin = true_info.get("bin", None)
+                if true_p is None or true_p <= 0 or true_bin != bin_name:
+                    continue
+                n += 1
+                p = grp.sort_values("ranker_score", ascending=False).iloc[0]["bls_period"]
+                if is_alias(p, true_p):
+                    correct += 1
+            if n > 0:
+                print(f"    {bin_name:>14s}: {correct}/{n}")
 
-    y_true = best_per_star["kepid"].map(has_planet_map).fillna(0).astype(int).values
-    y_score = best_per_star["det_proba"].values
+        # ── Detection evaluation ───────────────────────────────────────
+        print(f"\n{'='*70}")
+        print("DETECTION METRICS")
+        print("=" * 70)
 
-    ap = average_precision_score(y_true, y_score)
-    f1, prec, rec, _ = precision_recall_fscore_support(
-        y_true, (y_score >= 0.23).astype(int), average="binary", zero_division=0
-    )
-    print(f"  AP: {ap:.4f}")
-    print(f"  At threshold 0.23: Precision={prec:.3f}, Recall={rec:.3f}, F1={f1:.3f}")
+        y_true = best_per_star["kepid"].map(has_planet_map).fillna(0).astype(int).values
+        y_score = best_per_star["det_proba"].values
+
+        ap = average_precision_score(y_true, y_score)
+        prec, rec, f1, _ = precision_recall_fscore_support(
+            y_true, (y_score >= 0.23).astype(int), average="binary", zero_division=0
+        )
+        print(f"  AP: {ap:.4f}")
+        print(f"  At threshold 0.23: Precision={prec:.3f}, Recall={rec:.3f}, F1={f1:.3f}")
 
     # ── Generate submission ────────────────────────────────────────────
     print(f"\n{'='*70}")
@@ -139,23 +159,32 @@ def main():
     print("=" * 70)
 
     submission = best_per_star[["kepid"]].copy()
-    submission["star_id"] = submission["kepid"].apply(lambda x: f"KIC_{int(x):08d}")
+
+    if split == "private":
+        submission["star_id"] = submission["kepid"].apply(
+            lambda x: f"STAR_{int(x):04d}"
+        )
+    else:
+        submission["star_id"] = submission["kepid"].apply(
+            lambda x: f"KIC_{int(x):08d}"
+        )
+
     submission["prediction"] = (best_per_star["det_proba"] >= 0.23).astype(int)
     submission["confidence"] = np.clip(best_per_star["det_proba"].values, 0.01, 0.99)
     submission["period"] = np.where(
         submission["prediction"] == 1,
         best_per_star["bls_period"].values,
-        0.0
+        np.nan
     )
     submission["depth_ppm"] = np.where(
         submission["prediction"] == 1,
         best_per_star["bls_depth_ppm"].values,
-        0.0
+        np.nan
     )
     submission["duration_hours"] = np.where(
         submission["prediction"] == 1,
         best_per_star["bls_duration_hours"].values,
-        0.0
+        np.nan
     )
 
     submission = submission[["star_id", "prediction", "confidence", "period", "depth_ppm", "duration_hours"]]
@@ -173,7 +202,7 @@ def main():
     if len(pos) > 10:
         print(f"    ... and {len(pos) - 10} more")
 
-    out_path = OUTPUTS_DIR / "submission_v10_ranker.csv"
+    out_path = OUTPUTS_DIR / f"submission_v10_{split}.csv"
     submission.to_csv(out_path, index=False)
     print(f"\n  Saved: {out_path}")
 

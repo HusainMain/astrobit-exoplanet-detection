@@ -6,15 +6,17 @@ Detecting transiting exoplanets from Kepler light curves and characterizing thei
 
 The AstroBit ML competition asks us to:
 
-1. **Detect** which of 446 Kepler stars host transiting exoplanets
+1. **Detect** which of 445 Kepler stars host transiting exoplanets
 2. **Characterize** each detection's orbital period, transit depth, and transit duration
 3. Score on **Detection F1 + PR-AUC** combined with **characterization accuracy** (period/depth/duration within tolerances)
 
 **Data:**
-- 269 train stars (30 with known planets)
-- 89 dev stars (30 with known planets)
+- 269 train stars, with labels and injected-signal truth
+- 89 dev stars, with labels and injected-signal truth
 - 87 private test stars (hidden)
 - Light curves: preprocessed parquet files with time, flux, quarter, and quality columns
+
+On dev, the corrected detection target has 51 positives: 21 label positives plus 30 injected signals.
 
 **Difficulty bins** (from `train_truth.csv`):
 - `earth_analog` — shallow, long-period signals (hardest)
@@ -34,12 +36,12 @@ Started from the competition's starter notebook. Basic BLS period search with `w
 
 ### 2. Detrend Window Fix
 
-**Critical finding:** The detrend window controls everything. A 1-day rolling median window (default) was too long — it smoothed out the transits themselves. Reducing to 0.5 days made BLS actually find real periods.
+The 0.5-day detrending window was the most important preprocessing choice we found. A 1-day rolling median window (default) was too long — it smoothed out the transits themselves. Reducing to 0.5 days made BLS actually find real periods.
 
 - 1-day window: true period ranks 3452/20000
 - 0.5-day window: true period ranks 1/20000 (SDE=56 for deep signal)
 
-This single change was the biggest improvement in the entire project.
+This was the single biggest improvement in the project, and everything else built on top of it.
 
 ### 3. Feature Engineering + Star-Level Classifier
 
@@ -49,7 +51,7 @@ Built ~55 star-level features (BLS SDE, period, depth, duration, SNR, transit co
 
 ### 4. Candidate-Level Reranker
 
-Realized that star-level detection wasn't enough — we needed to pick the *right period* from BLS's top-20 candidates per star.
+Star-level detection wasn't enough — we needed to pick the *right period* from BLS's top-20 candidates per star.
 
 Built a **reranker** (XGB + LGBM ensemble) that scores each of the 20 candidates per star and picks the best one. Used 27 candidate-level features:
 - BLS metrics (period, depth, duration, SNR, SDE)
@@ -61,13 +63,13 @@ Built a **reranker** (XGB + LGBM ensemble) that scores each of the 20 candidates
 
 ### 5. Multi-Window Consensus Clustering
 
-Tried running BLS across 5 different detrend windows (0.25d, 0.5d, 1.0d, 2.0d, 3.0d) and clustering peaks that appeared across windows. Idea: if a period shows up in multiple detrend windows, it's more likely real.
+Tried running BLS across 5 different detrend windows (0.25d, 0.5d, 1.0d, 2.0d, 3.0d) and clustering peaks that appeared across windows. The idea was that if a period shows up in multiple detrend windows, it's more likely real.
 
 **Result:** Hurt both recovery AND detection. The aggressive filtering removed real signals. Abandoned.
 
 ### 6. Synthetic Injection Augmentation
 
-The fundamental problem was data: only 30 positive train stars with truth. Built a synthetic injection pipeline:
+The main limitation was data: only 30 positive train stars with truth. Built a synthetic injection pipeline:
 1. Pick quiet host stars (no known planets)
 2. Inject synthetic box transits with parameters sampled from the truth distribution
 3. Re-run BLS to get candidate lists with known ground truth
@@ -79,7 +81,7 @@ The fundamental problem was data: only 30 positive train stars with truth. Built
 
 Key augmentation details:
 - Injected periods sampled from truth distribution with ±20% noise
-- 30 near-systematic injections (periods near 372d, 186d, 93d) to teach the model these are bad
+- 30 near-systematic injections (periods near 372d, 186d, 93d) to teach the model these are less likely to be real
 - Balanced: earth_analog 30%, shallow 25%, mid 25%, deep 20%
 - Final: 5,280 augmented candidates added to 5,380 real candidates = 10,660 training rows
 
@@ -157,20 +159,20 @@ depth_trend_slope, duration_consistency, baseline_rms, kepmag, teff, logg, radiu
 ### Missed Stars Analysis
 
 Of the 14 missed dev stars:
-- **4 stars:** Correct period not in BLS top-20 at all (fundamental BLS limitation)
-- **10 stars:** Correct period present in top-20 but misranked (systematic alias confusion — 8/10 selected period within 20d of 372d/186d/93d)
+- **4 stars:** Correct period not in BLS top-20 at all. With the current BLS settings, these signals are not recovered by the candidate generation step.
+- **10 stars:** Correct period present in top-20 but misranked. 8/10 of these had their selected period within 20d of 372d/186d/93d, suggesting the systematic peaks are the main confusion source.
 
 ---
 
 ## Key Insights
 
-1. **Detrend window is everything.** The 0.5-day rolling median window was the single biggest factor in making BLS work. Too long smooths transits; too short leaves noise.
+1. **The 0.5-day detrending window was the most important preprocessing choice we found.** Too long smooths transits; too short leaves noise. It made the difference between BLS finding real periods and not.
 
-2. **The 372-day Kepler systematic is the #1 enemy.** It dominates BLS periodograms, creates aliases at 186d and 93d, and confuses any model that doesn't explicitly account for it.
+2. **A recurring 372-day family of peaks was the main source of false positives in our experiments.** It dominates BLS periodograms, creates aliases at 186d and 93d, and confuses any model that doesn't explicitly account for it.
 
 3. **More data beats more features.** The injection augmentation (+3 correct periods) was worth more than all the feature engineering experiments combined.
 
-4. **The oracle is 30/30.** Every correct period exists somewhere in the top-20 candidates. The problem is ranking, not detection. This means the ceiling for period recovery is 100% — we just need a better ranker.
+4. **With the current BLS settings, 26/30 injected dev signals appear in the top-20 candidates.** The remaining 4 are not recovered by the current BLS candidate generation. The problem is largely ranking, not detection — which means there's room to improve with a better ranker.
 
 5. **Ensembles didn't help.** XGB + LGBM ensemble gave the same result as LGBM alone. The models are too correlated.
 
@@ -216,21 +218,27 @@ AstroBit/
 ## Running the Pipeline
 
 ```bash
-# 1. Extract candidates from BLS
+# 1. Install dependencies
+pip install -r requirements.txt
+
+# 2. Extract candidates from BLS
 python build_candidates.py
 
-# 2. Train the star-level detector
+# 3. Train the star-level detector
 python train_detector_v7.py
 
-# 3. Train the augmented reranker
+# 4. Train the augmented reranker
 python inject_augment_reranker.py
 
-# 4. Generate submission
+# 5. Generate submission
 python submit_v10_ranker.py
 ```
 
+Note: `models/augmented_lgbm_ranker.pkl` is committed to the repo, so step 4 can be skipped if you just want to generate a submission. If you retrain, the model will be overwritten.
+
 ## Dependencies
 
+See `requirements.txt` for the full list. Key packages:
 - Python 3.8+
 - numpy, pandas, scipy
 - astropy (BLS periodogram)
@@ -238,14 +246,17 @@ python submit_v10_ranker.py
 - lightgbm, xgboost (models)
 - scikit-learn (metrics, preprocessing)
 - matplotlib, seaborn (visualization)
+- pyarrow (parquet I/O)
 
 ## Submission Format
 
 ```csv
 star_id,prediction,confidence,period,depth_ppm,duration_hours
-KIC_0012345678,1,0.85,12.34,150.0,4.2
-KIC_0012345679,0,0.15,0.0,0.0,0.0
+STAR_0000,1,0.85,12.34,150.0,4.2
+STAR_0001,0,0.15,,,
 ```
+
+Negative predictions leave period/depth/duration blank (empty fields).
 
 ---
 
@@ -265,8 +276,8 @@ KIC_0012345679,0,0.15,0.0,0.0,0.0
 
 | Approach | Improvement | Why It Helped |
 |---|---|---|
-| 0.5-day detrend window | Massive | Unmasked real transits from BLS |
+| 0.5-day detrend window | Large | Unmasked real transits from BLS |
 | Candidate-level reranker | +4/30 | Picked best from top-20 instead of rank-0 |
 | Synthetic injection augmentation | +3/30 | More training data for the ranker |
-| Systematic distance feature | Implicit | Taught model to avoid 372d artifact |
+| Systematic distance feature | Implicit | Helped model avoid 372d artifact |
 | 27 candidate features | Implicit | Transit shape, timing, depth consistency |
