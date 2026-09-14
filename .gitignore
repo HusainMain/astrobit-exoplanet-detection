@@ -1,0 +1,26 @@
+# Data packs (too large for git)
+train_pack/
+dev_pack/
+private_pack/
+
+# Model files (regenerable)
+models/*.pkl
+
+# Output CSVs (regenerable)
+outputs/*.csv
+outputs/*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.opencode/
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# Zip files
+*.zip
