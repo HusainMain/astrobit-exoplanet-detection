@@ -401,6 +401,11 @@ def build_candidates(split_name, output_csv):
 
     df = pd.DataFrame(all_candidates)
 
+    if len(df) == 0:
+        print(f"  WARNING: No candidates generated for {split_name}", flush=True)
+        df.to_csv(output_csv, index=False)
+        return df
+
     # Report coverage with correct target
     n_with_truth = df["is_correct"].notna().sum()
     n_correct = (df["is_correct"] == 1).sum()

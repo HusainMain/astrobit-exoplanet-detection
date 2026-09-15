@@ -9,7 +9,7 @@ TEST_DIR = ROOT / "private_pack"
 
 TRAIN_PARQUETS = TRAIN_DIR / "train"
 DEV_PARQUETS = DEV_DIR / "dev"
-TEST_PARQUETS = TEST_DIR  # private stars live directly here
+TEST_PARQUETS = TEST_DIR / "private"
 
 TRAIN_LABELS = TRAIN_DIR / "train_labels.csv"
 TRAIN_TRUTH = TRAIN_DIR / "train_truth.csv"

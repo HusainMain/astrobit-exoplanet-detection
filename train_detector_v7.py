@@ -41,10 +41,12 @@ def main():
     print(f"Predict target ({pred_target}): {len(pred_df)} stars")
     print(f"Train has_planet: {dict(train['has_planet'].value_counts())}")
 
-    # Features: exclude label columns and kepid
+    # Features: exclude label columns and kepid, use intersection of train and pred
     exclude = {"kepid", "label", "has_planet"}
-    feat_cols = [c for c in train.columns if c not in exclude and train[c].dtype in ["float64", "int64", "float32", "int32"]]
-    print(f"\nFeatures: {len(feat_cols)}")
+    train_num = [c for c in train.columns if c not in exclude and train[c].dtype in ["float64", "int64", "float32", "int32"]]
+    pred_num = [c for c in pred_df.columns if c not in exclude and pred_df[c].dtype in ["float64", "int64", "float32", "int32"]]
+    feat_cols = sorted(set(train_num) & set(pred_num))
+    print(f"\nFeatures: {len(feat_cols)} (intersection of {len(train_num)} train, {len(pred_num)} pred)")
 
     X_train = train[feat_cols].values
     y_train = train["has_planet"].values.astype(int)

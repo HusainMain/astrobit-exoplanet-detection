@@ -22,7 +22,7 @@ def build_enhanced_aggregate(split="dev"):
     print(f"ENHANCED AGGREGATE FEATURES for {split}")
     print(f"{'='*70}")
 
-    df = pd.read_csv(f"outputs/{split}_candidates_v4.csv")
+    df = pd.read_csv(f"outputs/{split}_candidates.csv")
     labels = load_labels(split)
     truth = load_truth(split)
     target_info = make_target(labels, truth)

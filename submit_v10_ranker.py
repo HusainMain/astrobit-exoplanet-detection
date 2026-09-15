@@ -35,8 +35,8 @@ def load_ranker():
 
 def detect_split():
     """Auto-detect whether we're running on dev or private data."""
-    private_cands = OUTPUTS_DIR / "private_candidates_v4.csv"
-    dev_cands = OUTPUTS_DIR / "dev_candidates_v4.csv"
+    private_cands = OUTPUTS_DIR / "private_candidates.csv"
+    dev_cands = OUTPUTS_DIR / "dev_candidates.csv"
 
     if private_cands.exists():
         return "private"
@@ -60,7 +60,7 @@ def main():
     print("=" * 70)
 
     # ── Load data ──────────────────────────────────────────────────────
-    candidates = pd.read_csv(OUTPUTS_DIR / f"{split}_candidates_v4.csv")
+    candidates = pd.read_csv(OUTPUTS_DIR / f"{split}_candidates.csv")
     det = pd.read_csv(OUTPUTS_DIR / f"{split}_detected_v7.csv")
 
     labels = load_labels(split)
