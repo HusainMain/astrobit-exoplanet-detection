@@ -6,9 +6,11 @@ private_pack/
 # Model files (regenerable)
 models/*.pkl
 
-# Output CSVs (regenerable)
+# Output CSVs and visualizations (regenerable)
 outputs/*.csv
 outputs/*.log
+outputs/phase1_viz/
+outputs/phase2_viz/
 
 # Python
 __pycache__/
@@ -24,3 +26,6 @@ Desktop.ini
 
 # Zip files
 *.zip
+
+# One-off scripts
+validate_final.py

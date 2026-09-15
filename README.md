@@ -187,6 +187,7 @@ Of the 14 missed dev stars:
 ```
 AstroBit/
 ├── src/
+│   ├── __init__.py
 │   ├── config.py              # Paths, constants, hyperparameters
 │   ├── data_loader.py         # Load parquets, labels, truth CSVs
 │   ├── features.py            # Star-level feature extraction (~55 features)
@@ -195,18 +196,9 @@ AstroBit/
 │   └── visualize.py           # Light curve visualization
 ├── build_candidates.py        # extract_candidate_features(), bls_search_multi()
 ├── build_enhanced_aggregate.py # Aggregate features for star-level detector
-├── consensus_candidates.py    # Multi-window consensus (experimental, abandoned)
 ├── inject_augment_reranker.py # Synthetic injection augmentation (132 injections)
-├── inject_targeted_augment.py # Targeted augmentation (111 injections, no improvement)
-├── train_reranker_v3.py       # Original reranker training (XGB+LGBM ensemble)
-├── train_detector_v7.py       # Star-level detector training
-├── train_detector_v9.py       # Updated detector (experimental)
-├── submit_v7.py               # Detector-only submission
-├── submit_v8.py               # Detector + original reranker
-├── submit_v10.py              # Detector + augmented reranker
+├── train_detector_v7.py       # Star-level detector training + predict-private
 ├── submit_v10_ranker.py       # Final submission (LGBMRanker + v7 detector)
-├── eval_clean_comparison.py   # Clean dev comparison (all methods)
-├── starter_notebook.ipynb     # Competition starter notebook
 ├── models/
 │   └── augmented_lgbm_ranker.pkl  # Trained ranker (model + metadata)
 ├── outputs/                   # Generated CSVs (not committed, must rebuild)
