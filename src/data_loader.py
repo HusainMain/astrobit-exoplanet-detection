@@ -1,7 +1,7 @@
 """Unified data loader for AstroBit.
 
 Provides functions to load parquet light curves, labels, and ground truth
-for any split (train, dev, test).
+for any split (train, dev, private).
 """
 from __future__ import annotations
 from pathlib import Path
@@ -19,8 +19,22 @@ from src.config import (
 # ── Parquet loading ────────────────────────────────────────────────────
 
 def _kepid_from_filename(name: str) -> int:
-    """Extract integer KIC ID from 'KIC_1234567.parquet'."""
-    return int(name.replace("KIC_", "").replace(".parquet", ""))
+    """Extract integer KIC ID from 'KIC_1234567.parquet' or 'STAR_0000.parquet'."""
+    stem = name.replace(".parquet", "")
+    if stem.startswith("STAR_"):
+        return int(stem.replace("STAR_", ""))
+    return int(stem.replace("KIC_", ""))
+
+
+def _parquet_path_for_star(kepid: int, parquet_dir: Path) -> Path:
+    """Find parquet file for a star, handling both KIC_* and STAR_* naming."""
+    kic_path = parquet_dir / f"KIC_{kepid}.parquet"
+    if kic_path.exists():
+        return kic_path
+    star_path = parquet_dir / f"STAR_{kepid:04d}.parquet"
+    if star_path.exists():
+        return star_path
+    return kic_path  # return default for error message
 
 
 def load_light_curve(kepid: int, split: str = "train") -> pd.DataFrame:
@@ -29,28 +43,28 @@ def load_light_curve(kepid: int, split: str = "train") -> pd.DataFrame:
     Parameters
     ----------
     kepid : int
-        Kepler ID (e.g. 8165946).
+        Kepler ID (e.g. 8165946) or synthetic ID for private stars.
     split : str
-        'train', 'dev', or 'test'.
+        'train', 'dev', or 'private'.
 
     Returns
     -------
     pd.DataFrame with columns: time, flux, flux_err, quality, quarter.
     """
-    dirs = {"train": TRAIN_PARQUETS, "dev": DEV_PARQUETS, "test": TEST_PARQUETS}
+    dirs = {"train": TRAIN_PARQUETS, "dev": DEV_PARQUETS, "private": TEST_PARQUETS}
     parquet_dir = dirs[split]
-    path = parquet_dir / f"KIC_{kepid}.parquet"
+    path = _parquet_path_for_star(kepid, parquet_dir)
     if not path.exists():
-        raise FileNotFoundError(f"No parquet file for KIC {kepid} in {split}: {path}")
+        raise FileNotFoundError(f"No parquet file for kepid {kepid} in {split}: {path}")
     return pd.read_parquet(path)
 
 
 def load_all_light_curves(split: str = "train") -> dict[int, pd.DataFrame]:
     """Load all light curves for a split. Returns {kepid: DataFrame}."""
-    dirs = {"train": TRAIN_PARQUETS, "dev": DEV_PARQUETS, "test": TEST_PARQUETS}
+    dirs = {"train": TRAIN_PARQUETS, "dev": DEV_PARQUETS, "private": TEST_PARQUETS}
     parquet_dir = dirs[split]
     result = {}
-    for f in sorted(parquet_dir.glob("KIC_*.parquet")):
+    for f in sorted(parquet_dir.glob("*.parquet")):
         kepid = _kepid_from_filename(f.name)
         result[kepid] = pd.read_parquet(f)
     return result
@@ -61,10 +75,10 @@ def load_all_light_curves(split: str = "train") -> dict[int, pd.DataFrame]:
 def load_labels(split: str = "train") -> pd.DataFrame:
     """Load stellar labels (kepid, label, koi_disposition, stellar props).
 
-    For 'test' split, returns empty DataFrame (no labels available).
+    For 'private' split, returns empty DataFrame (no labels available).
     """
     paths = {"train": TRAIN_LABELS, "dev": DEV_LABELS}
-    if split == "test":
+    if split in ("test", "private"):
         return pd.DataFrame()
     return pd.read_csv(paths[split])
 
@@ -75,9 +89,11 @@ def load_truth(split: str = "train") -> pd.DataFrame:
     Returns DataFrame with columns:
         kepid, injected, bin, period_days, epoch_t0, depth_ppm,
         duration_hours, rp_rs, n_transits
+
+    For 'private' split, returns empty DataFrame (no truth available).
     """
     paths = {"train": TRAIN_TRUTH, "dev": DEV_TRUTH}
-    if split == "test":
+    if split in ("test", "private"):
         return pd.DataFrame()
     return pd.read_csv(paths[split])
 
@@ -126,12 +142,12 @@ def get_truth_for_star(kepid: int, truth_df: pd.DataFrame) -> Optional[dict]:
 # ── List parquet files in a directory ──────────────────────────────────
 
 def list_parquet_kepids(split: str = "train") -> list[int]:
-    """Return sorted list of KIC IDs that have parquet files."""
-    dirs = {"train": TRAIN_PARQUETS, "dev": DEV_PARQUETS, "test": TEST_PARQUETS}
+    """Return sorted list of KIC/STAR IDs that have parquet files."""
+    dirs = {"train": TRAIN_PARQUETS, "dev": DEV_PARQUETS, "private": TEST_PARQUETS}
     parquet_dir = dirs[split]
     if not parquet_dir.exists():
         return []
-    return []
+    return sorted(_kepid_from_filename(f.name) for f in parquet_dir.glob("*.parquet"))
 
 
 # ── Canonical target definition ────────────────────────────────────────
@@ -190,6 +206,4 @@ def get_star_id_from_path(path: str) -> str:
     For train/dev: 'KIC_10064054.parquet' -> 'KIC_10064054'
     For private test: 'STAR_0000.parquet' -> 'STAR_0000'
     """
-    from pathlib import Path
     return Path(path).stem
-    return sorted(_kepid_from_filename(f.name) for f in parquet_dir.glob("KIC_*.parquet"))

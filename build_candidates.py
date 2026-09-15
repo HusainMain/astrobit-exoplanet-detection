@@ -433,5 +433,17 @@ def build_candidates(split_name, output_csv):
 
 
 if __name__ == "__main__":
-    train_df = build_candidates("train", r"C:\Users\husai\OneDrive\Pictures\Documents\AstroBit\outputs\train_candidates.csv")
-    dev_df = build_candidates("dev", r"C:\Users\husai\OneDrive\Pictures\Documents\AstroBit\outputs\dev_candidates.csv")
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--split", choices=["train", "dev", "private"], default=None,
+                        help="Which split to build (default: train + dev)")
+    args = parser.parse_args()
+
+    if args.split:
+        splits = [args.split]
+    else:
+        splits = ["train", "dev"]
+
+    for s in splits:
+        out = fr"C:\Users\husai\OneDrive\Pictures\Documents\AstroBit\outputs\{s}_candidates.csv"
+        build_candidates(s, out)

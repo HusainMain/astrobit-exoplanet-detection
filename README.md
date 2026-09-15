@@ -209,7 +209,7 @@ AstroBit/
 ├── starter_notebook.ipynb     # Competition starter notebook
 ├── models/
 │   └── augmented_lgbm_ranker.pkl  # Trained ranker (model + metadata)
-├── outputs/                   # Generated CSVs and visualizations
+├── outputs/                   # Generated CSVs (not committed, must rebuild)
 ├── train_pack/                # Training data (269 stars)
 ├── dev_pack/                  # Dev data (89 stars)
 └── private_pack/              # Private test data (87 stars)
@@ -217,24 +217,43 @@ AstroBit/
 
 ## Running the Pipeline
 
+Generated CSVs in `outputs/` are not committed to the repo and must be rebuilt.
+
+### Dev (evaluation)
+
 ```bash
-# 1. Install dependencies
 pip install -r requirements.txt
 
-# 2. Extract candidates from BLS
+# 1. Extract BLS candidates
 python build_candidates.py
 
-# 3. Train the star-level detector
+# 2. Build aggregate features for detector
+python build_enhanced_aggregate.py
+
+# 3. Train detector and evaluate on dev
 python train_detector_v7.py
 
-# 4. Train the augmented reranker
-python inject_augment_reranker.py
-
-# 5. Generate submission
-python submit_v10_ranker.py
+# 4. Generate dev submission
+python submit_v10_ranker.py --split dev
 ```
 
-Note: `models/augmented_lgbm_ranker.pkl` is committed to the repo, so step 4 can be skipped if you just want to generate a submission. If you retrain, the model will be overwritten.
+### Private test (final submission)
+
+```bash
+# 1. Extract BLS candidates for private stars
+python build_candidates.py --split private
+
+# 2. Build aggregate features for private
+python build_enhanced_aggregate.py --split private
+
+# 3. Train detector and predict on private
+python train_detector_v7.py --predict-private
+
+# 4. Generate submission CSV
+python submit_v10_ranker.py --split private
+```
+
+Step 4 (`inject_augment_reranker.py`) can be skipped since `models/augmented_lgbm_ranker.pkl` is committed. Retraining overwrites it.
 
 ## Dependencies
 

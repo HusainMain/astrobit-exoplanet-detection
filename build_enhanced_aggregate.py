@@ -254,10 +254,19 @@ def build_enhanced_aggregate(split="dev"):
 
 
 if __name__ == "__main__":
-    agg_dev = build_enhanced_aggregate("dev")
-    agg_dev.to_csv("outputs/dev_aggregate_features_v2.csv", index=False)
-    print(f"\nSaved outputs/dev_aggregate_features_v2.csv ({agg_dev.shape[1]} cols)")
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--split", choices=["train", "dev", "private"], default=None,
+                        help="Which split to build (default: train + dev)")
+    args = parser.parse_args()
 
-    agg_train = build_enhanced_aggregate("train")
-    agg_train.to_csv("outputs/train_aggregate_features_v2.csv", index=False)
-    print(f"Saved outputs/train_aggregate_features_v2.csv ({agg_train.shape[1]} cols)")
+    if args.split:
+        splits = [args.split]
+    else:
+        splits = ["train", "dev"]
+
+    for s in splits:
+        agg = build_enhanced_aggregate(s)
+        out = f"outputs/{s}_aggregate_features.csv"
+        agg.to_csv(out, index=False)
+        print(f"\nSaved {out} ({agg.shape[1]} cols)")

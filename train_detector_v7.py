@@ -1,9 +1,8 @@
 """
 Star-level detector using top-20 candidate aggregate features.
-Train on train_aggregate, evaluate on dev_aggregate.
-Separate detection from period selection.
+Train on train_aggregate, evaluate on dev or predict on private.
 """
-import sys, warnings
+import sys, warnings, argparse
 warnings.filterwarnings("ignore")
 sys.path.insert(0, r'C:\Users\husai\OneDrive\Pictures\Documents\AstroBit')
 
@@ -18,17 +17,29 @@ from lightgbm import LGBMClassifier
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--predict-private", action="store_true",
+                        help="Train on train, predict on private (no evaluation)")
+    args = parser.parse_args()
+
     print("=" * 70)
     print("STAR-LEVEL DETECTOR (aggregate features)")
     print("=" * 70)
 
     train = pd.read_csv("outputs/train_aggregate_features.csv")
-    dev = pd.read_csv("outputs/dev_aggregate_features.csv")
+
+    if args.predict_private:
+        pred_target = "private"
+        pred_df = pd.read_csv("outputs/private_aggregate_features.csv")
+        print(f"Mode: train on train, predict on private")
+    else:
+        pred_target = "dev"
+        pred_df = pd.read_csv("outputs/dev_aggregate_features.csv")
+        print(f"Mode: train on train, evaluate on dev")
 
     print(f"Train: {len(train)} stars, {len(train.columns)} features")
-    print(f"Dev: {len(dev)} stars")
+    print(f"Predict target ({pred_target}): {len(pred_df)} stars")
     print(f"Train has_planet: {dict(train['has_planet'].value_counts())}")
-    print(f"Dev has_planet: {dict(dev['has_planet'].value_counts())}")
 
     # Features: exclude label columns and kepid
     exclude = {"kepid", "label", "has_planet"}
@@ -37,13 +48,10 @@ def main():
 
     X_train = train[feat_cols].values
     y_train = train["has_planet"].values.astype(int)
-    X_dev = dev[feat_cols].values
-    y_dev = dev["has_planet"].values.astype(int)
 
     n_pos_train = y_train.sum()
     n_neg_train = len(y_train) - n_pos_train
     print(f"Train: {n_pos_train} positive, {n_neg_train} negative")
-    print(f"Dev: {y_dev.sum()} positive, {len(y_dev) - y_dev.sum()} negative")
 
     # ── XGBoost ─────────────────────────────────────────────────────
     print("\n--- XGBoost ---")
@@ -64,8 +72,6 @@ def main():
     )
     xgb.fit(X_train, y_train, eval_set=[(X_train, y_train)], verbose=False)
 
-    dev_proba_xgb = xgb.predict_proba(X_dev)[:, 1]
-
     # ── LightGBM ────────────────────────────────────────────────────
     print("--- LightGBM ---")
     lgbm = LGBMClassifier(
@@ -85,10 +91,28 @@ def main():
     )
     lgbm.fit(X_train, y_train, eval_set=[(X_train, y_train)])
 
-    dev_proba_lgbm = lgbm.predict_proba(X_dev)[:, 1]
+    # ── Predict on target ──────────────────────────────────────────
+    X_pred = pred_df[feat_cols].values
+    proba_xgb = xgb.predict_proba(X_pred)[:, 1]
+    proba_lgbm = lgbm.predict_proba(X_pred)[:, 1]
+    proba = 0.5 * proba_xgb + 0.5 * proba_lgbm
 
-    # ── Ensemble ─────────────────────────────────────────────────────
-    dev_proba = 0.5 * dev_proba_xgb + 0.5 * dev_proba_lgbm
+    if args.predict_private:
+        # Private: no ground truth, just save predictions
+        pred_df["proba"] = proba
+        pred_out = "outputs/private_detected_v7.csv"
+        pred_df[["kepid", "proba"]].to_csv(pred_out, index=False)
+        print(f"\nSaved {pred_out}")
+
+        # Show confidence distribution
+        print(f"\nConfidence distribution:")
+        print(f"  min={proba.min():.3f}, median={np.median(proba):.3f}, max={proba.max():.3f}")
+        print(f"  >0.5: {(proba > 0.5).sum()}, >0.23: {(proba > 0.23).sum()}")
+        return pred_df, 0.23, feat_cols, xgb, lgbm
+
+    # ── Dev evaluation ──────────────────────────────────────────────
+    y_dev = pred_df["has_planet"].values.astype(int)
+    print(f"\nDev: {y_dev.sum()} positive, {len(y_dev) - y_dev.sum()} negative")
 
     # ── Metrics at various thresholds ────────────────────────────────
     print(f"\n--- Threshold sweep ---")
@@ -96,7 +120,7 @@ def main():
 
     best_f1, best_thresh = 0, 0.5
     for thresh in np.arange(0.20, 0.90, 0.01):
-        y_pred = (dev_proba >= thresh).astype(int)
+        y_pred = (proba >= thresh).astype(int)
         tp = int(((y_pred == 1) & (y_dev == 1)).sum())
         fp = int(((y_pred == 1) & (y_dev == 0)).sum())
         fn = int(((y_pred == 0) & (y_dev == 1)).sum())
@@ -114,7 +138,7 @@ def main():
     print(f"\nBest threshold: {best_thresh:.2f}, F1: {best_f1:.3f}")
 
     # ── Final metrics at best threshold ──────────────────────────────
-    y_pred_best = (dev_proba >= best_thresh).astype(int)
+    y_pred_best = (proba >= best_thresh).astype(int)
     tp = int(((y_pred_best == 1) & (y_dev == 1)).sum())
     fp = int(((y_pred_best == 1) & (y_dev == 0)).sum())
     fn = int(((y_pred_best == 0) & (y_dev == 1)).sum())
@@ -128,8 +152,8 @@ def main():
     print(f"  Accuracy: {(tp+tn)/(tp+fp+fn+tn):.3f}")
 
     # ── AUC and AP ───────────────────────────────────────────────────
-    auc = roc_auc_score(y_dev, dev_proba)
-    ap = average_precision_score(y_dev, dev_proba)
+    auc = roc_auc_score(y_dev, proba)
+    ap = average_precision_score(y_dev, proba)
     print(f"\n  AUC: {auc:.3f}")
     print(f"  AP (PR-AUC): {ap:.3f}")
 
@@ -144,13 +168,13 @@ def main():
 
     # ── Per-star analysis ────────────────────────────────────────────
     print(f"\n--- Per-star detection (best threshold={best_thresh:.2f}) ---")
-    dev["proba"] = dev_proba
-    dev["pred"] = y_pred_best
+    pred_df["proba"] = proba
+    pred_df["pred"] = y_pred_best
 
     # Detected positives
-    detected_pos = dev[(dev["pred"] == 1) & (dev["has_planet"] == 1)]
-    false_pos = dev[(dev["pred"] == 1) & (dev["has_planet"] == 0)]
-    missed = dev[(dev["pred"] == 0) & (dev["has_planet"] == 1)]
+    detected_pos = pred_df[(pred_df["pred"] == 1) & (pred_df["has_planet"] == 1)]
+    false_pos = pred_df[(pred_df["pred"] == 1) & (pred_df["has_planet"] == 0)]
+    missed = pred_df[(pred_df["pred"] == 0) & (pred_df["has_planet"] == 1)]
 
     print(f"\n  Detected {len(detected_pos)}/{int(y_dev.sum())} positive stars")
     print(f"  False positives: {len(false_pos)}")
@@ -164,17 +188,17 @@ def main():
     # ── Confidence calibration check ─────────────────────────────────
     print(f"\n--- Confidence distribution by class ---")
     for label, name in [(1, "POS"), (0, "NEG")]:
-        vals = dev_proba[y_dev == label]
+        vals = proba[y_dev == label]
         print(f"  {name}: min={vals.min():.3f}, p25={np.percentile(vals, 25):.3f}, "
               f"median={np.median(vals):.3f}, p75={np.percentile(vals, 75):.3f}, max={vals.max():.3f}")
 
     # Save
-    dev.to_csv("outputs/dev_detected_v7.csv", index=False)
-    print(f"\nSaved outputs/dev_detected_v7.csv")
+    pred_df.to_csv(f"outputs/{pred_target}_detected_v7.csv", index=False)
+    print(f"\nSaved outputs/{pred_target}_detected_v7.csv")
 
     # Return results for submission generation
-    return dev, best_thresh, feat_cols, xgb, lgbm
+    return pred_df, best_thresh, feat_cols, xgb, lgbm
 
 
 if __name__ == "__main__":
-    dev, best_thresh, feat_cols, xgb_model, lgbm_model = main()
+    main()
